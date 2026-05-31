@@ -1,0 +1,173 @@
+stirling_app/
+│
+├── main.py
+├── etl.py
+├── pricing.py
+└── instruction.txt
+
+
+2. Kode Program Python
+pricing.py (Modul Matematika & Stirling)
+import numpy as np
+
+def stirling_log_factorial(n):
+    """
+    Menghitung ln(n!) menggunakan Stirling Approximation Versi Akurat.
+    Sangat berguna untuk n besar agar menghindari integer overflow.
+    """
+    if n == 0 or n == 1:
+        return 0.0
+    # Formula: ln(n!) ≈ 0.5 * ln(2 * pi * n) + n * ln(n) - n
+    return 0.5 * np.log(2 * np.pi * n) + n * np.log(n) - n
+
+def risk_neutral_probability(R, d, u):
+    """Menghitung probabilitas netral risiko (p)"""
+    return (R - d) / (u - d)
+
+def binomial_stirling_option_pricing(S, X, T, r, sigma, n, option_type='call'):
+    """
+    Pricing Opsi Eropa menggunakan Kombinasi Pohon Binomial & Stirling Approximation
+    untuk menghitung kombinasi binomial n! / (k!(n-k)!) pada n skala besar.
+    """
+    dt = T / n
+    R = np.exp(r * dt) # Faktor diskonto kontinu
+    
+    # Parameter pergerakan harga CRR (Cox-Ross-Rubinstein)
+    u = np.exp(sigma * np.sqrt(dt))
+    d = 1 / u
+    
+    p = risk_neutral_probability(R, d, u)
+    
+    # ln dari probabilitas untuk menghindari underflow pada perkalian berulang
+    ln_p = np.log(p)
+    ln_1_minus_p = np.log(1 - p)
+    
+    option_price = 0.0
+    
+    # Menghitung nilai ekspektasi pada waktu jatuh tempo (Terminal Nodes)
+    for k in range(n + 1):
+        # Hitung harga saham pada simpul ke-k di akhir periode
+        S_t = S * (u ** k) * (d ** (n - k))
+        
+        # Hitung payoff opsi
+        if option_type.lower() == 'call':
+            payoff = max(S_t - X, 0)
+        else:
+            payoff = max(X - S_t, 0)
+            
+        if payoff > 0:
+            # Hitung ln dari kombinasi binomial C(n,k) menggunakan Stirling
+            ln_C_n_k = stirling_log_factorial(n) - (stirling_log_factorial(k) + stirling_log_factorial(n - k))
+            
+            # Hitung ln dari probabilitas binomial: ln [ C(n,k) * p^k * (1-p)^(n-k) ]
+            ln_prob = ln_C_n_k + (k * ln_p) + ((n - k) * ln_1_minus_p)
+            
+            # Tambahkan ke total harga opsi (didiskontokan langsung)
+            option_price += payoff * np.exp(ln_prob - r * T)
+            
+    return option_price
+
+etl.py (Modul Fetch Data & ETL)
+
+import pandas as pd
+import numpy as np
+import yfinance as yf
+from datetime import datetime, timedelta
+
+def extract_market_data(ticker: str, days_back: int = 365):
+    """EXTRACT: Mengambil data historis dari Yahoo Finance"""
+    print(f"[ETL - EXTRACT] Mengambil data untuk {ticker}...")
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days_back)
+    
+    # Fetch data menggunakan yfinance
+    df = yf.download(ticker, start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+    if df.empty:
+        raise ValueError(f"Data tidak ditemukan untuk ticker: {ticker}")
+    return df
+
+def transform_market_data(df: pd.DataFrame):
+    """TRANSFORM: Membersihkan data dan menghitung volatilitas historis (sigma)"""
+    print("[ETL - TRANSFORM] Memproses data dan menghitung volatilitas harian...")
+    
+    # Memastikan struktur kolom datar jika menggunakan yfinance versi terbaru
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.droplevel(1)
+        
+    df = df'Close'.copy()
+    df.dropna(inplace=True)
+    
+    # 1. Hitung Log Return harian
+    df['Log_Return'] = np.log(df['Close'] / df['Close'].shift(1))
+    
+    # 2. Hitung Volatilitas Historis Tahunan (Sigma)
+    daily_volatility = df['Log_Return'].std()
+    annual_volatility = daily_volatility * np.sqrt(252) # 252 hari bursa dalam setahun
+    
+    current_price = float(df['Close'].iloc[-1])
+    
+    return current_price, annual_volatility
+
+def load_to_summary(ticker, price, volatility):
+    """LOAD: Memuat hasil transformasi ke dalam struktur dictionary siap pakai"""
+    print("[ETL - LOAD] Memuat metrik pasar ke Command Center...")
+    market_metrics = {
+        "ticker": ticker,
+        "current_price": round(price, 2),
+        "annual_volatility": round(volatility, 4),
+        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    return market_metrics
+
+def run_etl_pipeline(ticker: str):
+    """Fungsi utama orchestrator ETL"""
+    raw_data = extract_market_data(ticker)
+    price, volatility = transform_market_data(raw_data)
+    metrics = load_to_summary(ticker, price, volatility)
+    return metrics
+
+3. File Dokumentasi & Instruksi
+Buat file baru bernama instruction.txt dan masukkan panduan berikut
+======================================================================
+         PANDUAN OPERASIONAL: STIRLING OPTIONS PRICING APP
+======================================================================
+
+1. DESKRIPSI APLIKASI
+   Aplikasi ini mengintegrasikan pipeline ETL finansial real-time dengan 
+   mesin kuantitatif tingkat tinggi. Menggunakan Stirling Approximation 
+   untuk memotong beban komputasi faktorial (n!) pada pohon binomial 
+   skala besar (High-Step Binomial Tree), mencegah terjadinya 
+   floating-point overflow pada sistem komputer Command Center Anda.
+
+2. PREREQUISITES & DEPENDENSI (DIBUTUHKAN)
+   Pastikan Anda menggunakan Python 3.8+ dan telah menginstal library berikut:
+   
+   Buka terminal/command prompt lalu jalankan:
+   pip install numpy pandas yfinance
+
+3. CARA JALANKAN APLIKASI
+   A. Buka terminal di direktori tempat Anda menyimpan file projek ini.
+   B. Jalankan perintah:
+      python main.py
+   C. Masukkan kode saham dunia (misal: AAPL untuk Apple, TSLA untuk Tesla).
+   D. Ikuti instruksi input parameter opsi pada layar layar.
+
+4. ALUR KERJA SISTEM (BEHIND THE SCENE)
+   - EXTRACT  : Mengunduh otomatis data harga bursa 1 tahun ke belakang 
+                via Yahoo Finance API.
+   - TRANSFORM: Membersihkan data kosong, menghitung log return harian, 
+                dan mengekstrak nilai Volatilitas Historis Tahunan (Sigma).
+   - LOAD     : Menyusun parameter pasar yang bersih ke memori jangka pendek.
+   - PRICING  : Mesin binomial menghitung kemungkinan harga masa depan. 
+                Kombinatorik cabang raksasa (n=10.000) dihitung instan 
+                menggunakan Persamaan Log-Stirling di modul pricing.py.
+
+5. TROUBLESHOOTING
+   - Jika data yfinance gagal di-fetch, pastikan koneksi internet aktif.
+   - Jika ticker tidak ditemukan, gunakan kode resmi Yahoo Finance. 
+     (Contoh saham Indonesia: BBCA.JK, TLKM.JK).
+   - Nilai 'n' yang terlampau tinggi (>50.000) masih dapat berjalan berkat 
+     Stirling, namun kecepatan komputasi akan mulai dibatasi oleh struktur 
+     looping linear Python.
+======================================================================
+
